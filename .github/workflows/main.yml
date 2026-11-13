@@ -1,3 +1,4 @@
+
 name: Build
 
 on:
@@ -7,36 +8,83 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Encontrar e extrair ZIP
+        run: |
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "::error::Nenhum arquivo ZIP encontrado!"
+            exit 1
+          fi
+
+          mkdir -p extracted
+          unzip -q "$ZIP" -d extracted
+
+          BUILD_FILE=$(find extracted -type f \( \
+            -name "build.gradle" -o \
+            -name "build.gradle.kts" \
+          \) -print -quit)
+
+          if [ -z "$BUILD_FILE" ]; then
+            echo "::error::Nenhum build.gradle encontrado dentro do ZIP!"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$BUILD_FILE")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Projeto encontrado: $PROJECT_DIR"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: Avisar sobre arquivos de versoes antigas (ignorados pelo build)
+
+      - name: Avisar sobre arquivos de versoes antigas
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           for f in src/main/java/dev/rocketatmosphere/raptor src/main/java/dev/rocketatmosphere/client/AirDensity.java; do
-            if [ -e "$f" ]; then echo "::warning::Arquivo/pasta antigo ignorado pelo build: $f (pode apagar do repositorio)"; fi
+            if [ -e "$f" ]; then
+              echo "::warning::Arquivo/pasta antigo ignorado pelo build: $f"
+            fi
           done
+
       - name: Build
+        working-directory: ${{ env.PROJECT_DIR }}
         run: gradle build --no-daemon --stacktrace
+
       - name: Conferir que os stubs NAO foram empacotados
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           if unzip -l build/libs/*.jar | grep -E "dev/(propulsionteam|ryanhcode)/"; then
-            echo "ERRO: stubs dentro do jar"; exit 1
+            echo "ERRO: stubs dentro do jar"
+            exit 1
           fi
-      - name: Conferir que nao ha classes antigas nem registro de cliente duplicado no jar
+
+      - name: Conferir classes antigas e registro duplicado
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           if unzip -l build/libs/*.jar | grep -E "rocketatmosphere/raptor/"; then
-            echo "ERRO: classes antigas (raptor) dentro do jar"; exit 1
+            echo "ERRO: classes antigas (raptor) dentro do jar"
+            exit 1
           fi
+
           n=$(unzip -l build/libs/*.jar | grep -c -E "rocketatmosphere/engine/RocketClient\.class")
-          if [ "$n" != "1" ]; then echo "ERRO: esperado 1 RocketClient, achou $n"; exit 1; fi
+
+          if [ "$n" != "1" ]; then
+            echo "ERRO: esperado 1 RocketClient, achou $n"
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: create-rocket-atmosphere-jar
-          path: build/libs/*.jar
-          
+          path: ${{ env.PROJECT_DIR }}/build/libs/*.jar
